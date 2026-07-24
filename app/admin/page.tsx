@@ -3,17 +3,22 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-// Initialisation sécurisée
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+console.log("Vérification URL :", process.env.NEXT_PUBLIC_SUPABASE_URL);
+// 🛡️ NETTOYEUR EXTRÊME DES VARIABLES D'ENVIRONNEMENT
+const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const rawKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+// Supprime les guillemets, les apostrophes, les espaces, et le slash (/) à la fin
+const supabaseUrl = rawUrl.replace(/['"]/g, '').trim().replace(/\/$/, "");
+const supabaseAnonKey = rawKey.replace(/['"]/g, '').trim();
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error("Erreur : Les variables d'environnement Supabase sont manquantes.");
 }
 
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const BUCKET_NAME = "images";
 
-const BUCKET_NAME = "images"; 
 
 export default function AdminDashboard() {
   const [estAdminAuthentifie, setEstAdminAuthentifie] = useState(false);
@@ -28,7 +33,6 @@ export default function AdminDashboard() {
   const [nomLivreur, setNomLivreur] = useState("");
   const [telLivreur, setTelLivreur] = useState("");
   const [passLivreur, setPassLivreur] = useState("");
-  const [modifPassLivreur, setModifPassLivreur] = useState<{ [key: number]: string }>({});
 
   const [categories, setCategories] = useState<any[]>([]);
   const [nomNouvelleCategorie, setNomNouvelleCategorie] = useState("");
@@ -65,7 +69,6 @@ export default function AdminDashboard() {
       fetchProduits(); 
       fetchLivreurs();
 
-      // Écoute des nouvelles commandes en Temps Réel avec Son
       const channel = supabase
         .channel('custom-insert-channel')
         .on(
@@ -159,9 +162,6 @@ export default function AdminDashboard() {
     const { data, error } = await supabase.from("livreurs").select("*").order("nom");
     if (!error && data) {
       setLivreurs(data);
-      const initialPassStates: { [key: number]: string } = {};
-      data.forEach((l: any) => { initialPassStates[l.id] = l.mot_de_passe || ""; });
-      setModifPassLivreur(initialPassStates);
     }
   }
 
@@ -169,12 +169,6 @@ export default function AdminDashboard() {
     e.preventDefault();
     const { error } = await supabase.from("livreurs").insert([{ nom: nomLivreur, telephone: telLivreur, mot_de_passe: passLivreur }]);
     if (!error) { setNomLivreur(""); setTelLivreur(""); setPassLivreur(""); fetchLivreurs(); }
-  }
-
-  async function handleMettreAJourMotDePasse(id: number, nouveauPass: string) {
-    if (!nouveauPass || nouveauPass.trim() === "") return alert("Mot de passe vide !");
-    const { error } = await supabase.from("livreurs").update({ mot_de_passe: nouveauPass }).eq("id", id);
-    if (!error) { alert("✅ Mot de passe mis à jour !"); fetchLivreurs(); }
   }
 
   async function handleSupprimerLivreur(id: number, nom: string) {
@@ -209,22 +203,31 @@ export default function AdminDashboard() {
     setVarNom(""); setVarPrix(""); setSuppNom(""); setSuppPrix("");
   };
 
+  // NOUVELLE FONCTION ULTRA SÉCURISÉE POUR LES IMAGES
   const handleMenuSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); 
     setUploading(true); 
     setMessageMenu(null);
     try {
+      if (!supabaseUrl) throw new Error("URL Supabase introuvable ou mal configurée.");
+
       let finalImageUrl = imageUrl;
       
       if (imageFile) {
-        const fileExt = imageFile.name.split('.').pop();
-        const fileName = `${crypto.randomUUID()}.${fileExt}`;
+        // Force un nom de fichier parfait et unique
+        const fileName = `parfum_${Date.now()}.jpg`;
         
-        const { error: uploadError } = await supabase.storage
+        const { data, error: uploadError } = await supabase.storage
           .from(BUCKET_NAME)
-          .upload(fileName, imageFile);
+          .upload(fileName, imageFile, {
+            cacheControl: '3600',
+            upsert: true
+          });
           
-        if (uploadError) throw new Error(`Erreur upload image : ${uploadError.message}`);
+        if (uploadError) {
+          console.error("Détail de l'erreur d'upload:", uploadError);
+          throw new Error(`Upload impossible: ${uploadError.message}`);
+        }
         
         const { data: publicUrlData } = supabase.storage
           .from(BUCKET_NAME)
@@ -319,7 +322,6 @@ export default function AdminDashboard() {
                          <div className="flex flex-wrap items-center gap-3">
                            <span className="text-sm bg-[#111C3A] text-gray-400 border border-[#1C2C59] px-2 py-1 rounded font-mono font-bold">#{cmd.id}</span>
                            
-                           {/* AFFICHAGE HEURE ET DATE DE LA COMMANDE */}
                            {cmd.created_at && (
                              <span className="text-xs text-gray-400 bg-[#111C3A] border border-[#1C2C59] px-2 py-1 rounded-md font-mono flex items-center gap-1">
                                ⏱️ {formaterDate(cmd.created_at)}
@@ -401,7 +403,6 @@ export default function AdminDashboard() {
                   </select>
                 </div>
                 
-                {/* ⚠️ IMPORTANT : TEXTE D'AIDE POUR LE PRIX DE BASE */}
                 <div className="bg-[#0A1128] border border-[#C59B27]/30 p-3 rounded-lg shadow-inner">
                   <label className="block text-xs font-bold uppercase text-[#C59B27] mb-2">💰 Prix de base pour 10 ml (DA)</label>
                   <p className="text-[10px] text-gray-400 mb-2">Le site multipliera automatiquement ce prix pour 20ml, 30ml et 50ml.</p>
@@ -411,21 +412,21 @@ export default function AdminDashboard() {
                 {/* 1. TYPES / BOUTEILLE COMPLETE */}
                 <div className="bg-[#0A1128] border border-[#1C2C59] p-4 rounded-xl">
                   <label className="block text-xs font-bold uppercase text-blue-400 mb-1">🏷️ Variantes / Bouteille Complète</label>
-                  <p className="text-[10px] text-gray-500 mb-3">Ex 1: "Bouteille Complète" (+4500 DA)<br/>Ex 2: "Extrait de Parfum" (+200 DA pour 10ml)</p>
+                  <p className="text-[10px] text-gray-500 mb-3">Ex 1: "Bouteille Complète" (Prix: 11000 DA)</p>
                   <div className="flex gap-2 mb-2">
                     <input type="text" placeholder="Nom (Ex: Bouteille Complète)" value={varNom} onChange={(e) => setVarNom(e.target.value)} className="w-full bg-[#111C3A] border border-[#1C2C59] rounded-lg p-2 text-white outline-none focus:border-blue-400 text-sm" />
-                    <input type="number" placeholder="Prix +" value={varPrix} onChange={(e) => setVarPrix(e.target.value)} className="w-24 bg-[#111C3A] border border-[#1C2C59] rounded-lg p-2 text-white outline-none focus:border-blue-400 text-sm" />
+                    <input type="number" placeholder="Prix final" value={varPrix} onChange={(e) => setVarPrix(e.target.value)} className="w-24 bg-[#111C3A] border border-[#1C2C59] rounded-lg p-2 text-white outline-none focus:border-blue-400 text-sm" />
                     <button type="button" onClick={() => { if (varNom) { setVariantes([...variantes, { nom: varNom, prix: parseFloat(varPrix||"0") }]); setVarNom(""); setVarPrix(""); } }} className="bg-[#C59B27] text-[#0A1128] font-bold px-3 py-2 rounded-lg text-sm hover:bg-[#A37C1C] transition-colors">+</button>
                   </div>
                   {variantes.map((v, i) => (
-                    <div key={i} className="flex justify-between items-center bg-[#111C3A] border border-[#1C2C59] p-2 rounded-lg text-sm mb-1"><span className="text-gray-200">{v.nom} <span className="text-blue-400 font-bold">(+{v.prix} DA)</span></span><button type="button" onClick={() => setVariantes(variantes.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-500">❌</button></div>
+                    <div key={i} className="flex justify-between items-center bg-[#111C3A] border border-[#1C2C59] p-2 rounded-lg text-sm mb-1"><span className="text-gray-200">{v.nom} <span className="text-blue-400 font-bold">({v.prix} DA)</span></span><button type="button" onClick={() => setVariantes(variantes.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-500">❌</button></div>
                   ))}
                 </div>
 
                 {/* 2. EXTRAS (SUPPLEMENTS) */}
                 <div className="bg-[#0A1128] border border-[#1C2C59] p-4 rounded-xl">
                   <label className="block text-xs font-bold uppercase text-amber-500 mb-1">➕ Les Extras Flacons</label>
-                  <p className="text-[10px] text-gray-500 mb-3">Ex: "Flacon en verre Luxe" (+150 DA), "Coffret Cadeau" (+300 DA)...</p>
+                  <p className="text-[10px] text-gray-500 mb-3">Ex: "Flacon Luxe" (+150 DA)</p>
                   <div className="flex gap-2 mb-2">
                     <input type="text" placeholder="Nom (Ex: Flacon Luxe)" value={suppNom} onChange={(e) => setSuppNom(e.target.value)} className="w-full bg-[#111C3A] border border-[#1C2C59] rounded-lg p-2 text-white outline-none focus:border-amber-500 text-sm" />
                     <input type="number" placeholder="Prix +" value={suppPrix} onChange={(e) => setSuppPrix(e.target.value)} className="w-24 bg-[#111C3A] border border-[#1C2C59] rounded-lg p-2 text-white outline-none focus:border-amber-500 text-sm" />
@@ -457,7 +458,6 @@ export default function AdminDashboard() {
                       {filtered.map((p) => (
                         <div key={p.id} className="bg-[#0A1128] p-4 rounded-xl border border-[#1C2C59] flex justify-between items-center hover:border-[#C59B27]/30 transition-colors">
                           <div className="flex gap-4 items-center">
-                            {/* AFFICHAGE IMAGE ENTIERE POUR LE PANEL ADMIN */}
                             <div className="w-16 h-16 bg-[#111C3A] rounded-lg flex items-center justify-center border border-[#1C2C59] p-1 shrink-0">
                               {p.image_url ? <img src={p.image_url} alt={p.titre} className="w-full h-full object-contain" /> : <span className="text-2xl">✨</span>}
                             </div>
