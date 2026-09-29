@@ -3,12 +3,9 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-console.log("Vérification URL :", process.env.NEXT_PUBLIC_SUPABASE_URL);
-// 🛡️ NETTOYEUR EXTRÊME DES VARIABLES D'ENVIRONNEMENT
 const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const rawKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
-// Supprime les guillemets, les apostrophes, les espaces, et le slash (/) à la fin
 const supabaseUrl = rawUrl.replace(/['"]/g, '').trim().replace(/\/$/, "");
 const supabaseAnonKey = rawKey.replace(/['"]/g, '').trim();
 
@@ -18,7 +15,6 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 const BUCKET_NAME = "images";
-
 
 export default function AdminDashboard() {
   const [estAdminAuthentifie, setEstAdminAuthentifie] = useState(false);
@@ -41,7 +37,9 @@ export default function AdminDashboard() {
   const [produits, setProduits] = useState<any[]>([]);
   const [titre, setTitre] = useState("");
   const [description, setDescription] = useState("");
-  const [prix, setPrix] = useState("");
+  const [prixBouteille, setPrixBouteille] = useState(""); // 🍾 Prix principal : Bouteille Complète
+  const [proposerDecant, setProposerDecant] = useState(true);
+  const [prixDecant10ml, setPrixDecant10ml] = useState(""); // 🧪 Prix optionnel 10 ml
   const [categorieSelected, setCategorieSelected] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -78,8 +76,8 @@ export default function AdminDashboard() {
             fetchCommandes();
             try {
               const audio = new Audio('/notif.mp3');
-              audio.play().catch((e) => console.log("Son bloqué par le navigateur en attente de clic"));
-            } catch (e) {
+              audio.play().catch(() => console.log("Son bloqué"));
+            } catch {
               console.log("Impossible de jouer le son");
             }
             setTimeout(() => {
@@ -153,7 +151,7 @@ export default function AdminDashboard() {
 
   async function attribuerLivreur(commandeId: number) {
     const livreurIdStr = livreurSelectionne[commandeId];
-    if (!livreurIdStr || livreurIdStr === "") return alert("Sélectionner un livreur !");
+    if (!livreurIdStr) return alert("Sélectionner un livreur !");
     const { error } = await supabase.from("commandes").update({ livreur_id: parseInt(livreurIdStr, 10), statut: "en route" }).eq("id", commandeId);
     if (!error) fetchCommandes();
   }
@@ -186,7 +184,17 @@ export default function AdminDashboard() {
     setEditingProduit(produit); 
     setTitre(produit.titre || produit.nom || "");
     setDescription(produit.description || ""); 
-    setPrix(produit.prix?.toString() || "");
+    setPrixBouteille(produit.prix?.toString() || "");
+    
+    // Détecter si un prix de décant 10ml est déjà enregistré
+    if (produit.prix_decant_10ml) {
+      setProposerDecant(true);
+      setPrixDecant10ml(produit.prix_decant_10ml.toString());
+    } else {
+      setProposerDecant(false);
+      setPrixDecant10ml("");
+    }
+
     setCategorieSelected(produit.categorie || (categories.length > 0 ? categories[0].nom : ""));
     setImageUrl(produit.image_url || "");
     setVariantes(produit.variantes || []); 
@@ -197,13 +205,24 @@ export default function AdminDashboard() {
   };
 
   const annulerModification = () => {
-    setEditingProduit(null); setTitre(""); setDescription(""); setPrix(""); setImageUrl("");
+    setEditingProduit(null);
+    setTitre("");
+    setDescription("");
+    setPrixBouteille("");
+    setProposerDecant(true);
+    setPrixDecant10ml("");
+    setImageUrl("");
     setCategorieSelected(categories.length > 0 ? categories[0].nom : ""); 
-    setVariantes([]); setSupplements([]); setImageFile(null); setMessageMenu(null); 
-    setVarNom(""); setVarPrix(""); setSuppNom(""); setSuppPrix("");
+    setVariantes([]);
+    setSupplements([]);
+    setImageFile(null);
+    setMessageMenu(null); 
+    setVarNom("");
+    setVarPrix("");
+    setSuppNom("");
+    setSuppPrix("");
   };
 
-  // NOUVELLE FONCTION ULTRA SÉCURISÉE POUR LES IMAGES
   const handleMenuSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); 
     setUploading(true); 
@@ -214,10 +233,8 @@ export default function AdminDashboard() {
       let finalImageUrl = imageUrl;
       
       if (imageFile) {
-        // Force un nom de fichier parfait et unique
         const fileName = `parfum_${Date.now()}.jpg`;
-        
-        const { data, error: uploadError } = await supabase.storage
+        const { error: uploadError } = await supabase.storage
           .from(BUCKET_NAME)
           .upload(fileName, imageFile, {
             cacheControl: '3600',
@@ -225,7 +242,6 @@ export default function AdminDashboard() {
           });
           
         if (uploadError) {
-          console.error("Détail de l'erreur d'upload:", uploadError);
           throw new Error(`Upload impossible: ${uploadError.message}`);
         }
         
@@ -236,25 +252,34 @@ export default function AdminDashboard() {
         finalImageUrl = publicUrlData.publicUrl;
       }
 
-      const donneesProduit = { 
+      // Construction des données produit
+      const donneesProduit: any = { 
         nom: titre, 
         titre: titre, 
         description: description, 
-        prix: parseFloat(prix), 
+        prix: parseFloat(prixBouteille), // Bouteille complète
+        prix_bouteille: parseFloat(prixBouteille),
         categorie: categorieSelected, 
         image_url: finalImageUrl, 
         variantes: variantes, 
         supplements: supplements 
       };
 
+      // Si l'option décant est cochée, on stocke le tarif 10ml
+      if (proposerDecant && prixDecant10ml) {
+        donneesProduit.prix_decant_10ml = parseFloat(prixDecant10ml);
+      } else {
+        donneesProduit.prix_decant_10ml = null;
+      }
+
       if (editingProduit) {
         const { error } = await supabase.from("produits").update(donneesProduit).eq("id", editingProduit.id);
         if (error) throw error; 
-        setMessageMenu({ type: "success", text: "🔄 Produit mis à jour !" });
+        setMessageMenu({ type: "success", text: "🔄 Produit mis à jour avec succès !" });
       } else {
-        const { error = null } = await supabase.from("produits").insert([donneesProduit]);
+        const { error } = await supabase.from("produits").insert([donneesProduit]);
         if (error) throw error; 
-        setMessageMenu({ type: "success", text: "✅ Produit ajouté !" });
+        setMessageMenu({ type: "success", text: "✅ Parfum ajouté au catalogue !" });
       }
       
       annulerModification(); 
@@ -321,15 +346,15 @@ export default function AdminDashboard() {
                        <div className="space-y-1 grow w-full md:w-auto">
                          <div className="flex flex-wrap items-center gap-3">
                            <span className="text-sm bg-[#111C3A] text-gray-400 border border-[#1C2C59] px-2 py-1 rounded font-mono font-bold">#{cmd.id}</span>
-                           
                            {cmd.created_at && (
                              <span className="text-xs text-gray-400 bg-[#111C3A] border border-[#1C2C59] px-2 py-1 rounded-md font-mono flex items-center gap-1">
                                ⏱️ {formaterDate(cmd.created_at)}
                              </span>
                            )}
-
                            <h3 className="font-bold text-lg text-white ml-1">{cmd.nom_client}</h3>
-                           <span className={`text-xs uppercase font-extrabold px-2 py-1 rounded ${cmd.statut === "en attente" ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" : cmd.statut === "en cours" ? "bg-blue-500/10 text-blue-400 border border-blue-500/20" : cmd.statut === "en route" ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" : "bg-green-500/10 text-green-400 border border-green-500/20"}`}>{cmd.statut === "en route" && livreurAttribue ? `En route (${livreurAttribue.nom})` : cmd.statut}</span>
+                           <span className={`text-xs uppercase font-extrabold px-2 py-1 rounded ${cmd.statut === "en attente" ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" : cmd.statut === "en cours" ? "bg-blue-500/10 text-blue-400 border border-blue-500/20" : cmd.statut === "en route" ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" : "bg-green-500/10 text-green-400 border border-green-500/20"}`}>
+                             {cmd.statut === "en route" && livreurAttribue ? `En route (${livreurAttribue.nom})` : cmd.statut}
+                           </span>
                          </div>
                          <p className="text-sm text-[#C59B27] font-bold mt-1">📞 {cmd.telephone_client || cmd.telephone}</p>
                          <p className="text-sm text-gray-400">📍 {cmd.adresse_livraison || cmd.adresse}</p>
@@ -340,7 +365,10 @@ export default function AdminDashboard() {
                          </div>
                        </div>
                        <div className="flex flex-col items-end gap-3 shrink-0 w-full md:w-auto border-t md:border-t-0 pt-3 md:pt-0 border-[#1C2C59]">
-                         <div className="text-right w-full md:w-auto flex md:block justify-between items-center"><span className="text-xs text-gray-500 uppercase">Total à encaisser</span><span className="text-2xl font-black text-[#C59B27] block">{cmd.total} DA</span></div>
+                         <div className="text-right w-full md:w-auto flex md:block justify-between items-center">
+                           <span className="text-xs text-gray-500 uppercase">Total à encaisser</span>
+                           <span className="text-2xl font-black text-[#C59B27] block">{cmd.total} DA</span>
+                         </div>
                          <div className="flex flex-wrap md:flex-nowrap gap-2 w-full justify-end items-center">
                            {cmd.statut === "en attente" && <button onClick={() => modifierStatutCommande(cmd.id, "en cours")} className="bg-[#C59B27] hover:bg-[#A37C1C] text-[#0A1128] text-xs font-bold py-2 px-4 rounded-lg uppercase w-full md:w-auto transition-colors">✨ Préparer</button>}
                            {cmd.statut === "en cours" && (
@@ -396,34 +424,69 @@ export default function AdminDashboard() {
               <h2 className="text-2xl font-bold mb-6 text-[#C59B27] uppercase">{editingProduit ? "🔄 Modifier" : "✨ Ajouter un parfum"}</h2>
               {messageMenu && <div className={`p-4 rounded-lg mb-6 text-sm font-semibold border ${messageMenu.type === "success" ? "bg-green-500/10 border-green-500/30 text-green-400" : "bg-red-500/10 border-red-500/30 text-red-400"}`}>{messageMenu.text}</div>}
               <form onSubmit={handleMenuSubmit} className="space-y-4">
-                <div><label className="block text-xs font-bold uppercase text-gray-400 mb-2">Nom du parfum (Ex: Ombre Nomade)</label><input type="text" required value={titre} onChange={(e) => setTitre(e.target.value)} className="w-full bg-[#0A1128] border border-[#1C2C59] rounded-lg p-3 text-white outline-none focus:border-[#C59B27] transition-colors" /></div>
-                <div><label className="block text-xs font-bold uppercase text-gray-400 mb-2">Catégorie</label>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-gray-400 mb-2">Nom du parfum (Ex: Ombre Nomade)</label>
+                  <input type="text" required value={titre} onChange={(e) => setTitre(e.target.value)} className="w-full bg-[#0A1128] border border-[#1C2C59] rounded-lg p-3 text-white outline-none focus:border-[#C59B27] transition-colors" />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase text-gray-400 mb-2">Catégorie</label>
                   <select value={categorieSelected} onChange={(e) => setCategorieSelected(e.target.value)} className="w-full bg-[#0A1128] border border-[#1C2C59] rounded-lg p-3 text-white outline-none cursor-pointer focus:border-[#C59B27] transition-colors">
                     {categories.map(cat => <option key={cat.id} value={cat.nom}>{cat.nom}</option>)}
                   </select>
                 </div>
                 
-                <div className="bg-[#0A1128] border border-[#C59B27]/30 p-3 rounded-lg shadow-inner">
-                  <label className="block text-xs font-bold uppercase text-[#C59B27] mb-2">💰 Prix de base pour 10 ml (DA)</label>
-                  <p className="text-[10px] text-gray-400 mb-2">Le site multipliera automatiquement ce prix pour 20ml, 30ml et 50ml.</p>
-                  <input type="number" required value={prix} onChange={(e) => setPrix(e.target.value)} className="w-full bg-[#111C3A] border border-[#1C2C59] rounded-lg p-3 text-white outline-none focus:border-[#C59B27] transition-colors font-bold" />
+                {/* 🍾 PRIX DE LA BOUTEILLE COMPLÈTE */}
+                <div className="bg-[#0A1128] border border-[#C59B27]/40 p-4 rounded-xl shadow-inner">
+                  <label className="block text-xs font-bold uppercase text-[#C59B27] mb-1">🍾 Prix de la Bouteille Complète (DA)</label>
+                  <p className="text-[10px] text-gray-400 mb-2">Prix affiché en vitrine pour l'achat du flacon original/complet.</p>
+                  <input type="number" required placeholder="Ex: 12000" value={prixBouteille} onChange={(e) => setPrixBouteille(e.target.value)} className="w-full bg-[#111C3A] border border-[#1C2C59] rounded-lg p-3 text-white outline-none focus:border-[#C59B27] transition-colors font-bold text-lg" />
                 </div>
-                
-                {/* 1. TYPES / BOUTEILLE COMPLETE */}
+
+                {/* 🧪 OPTION DÉCANT 10 ML */}
                 <div className="bg-[#0A1128] border border-[#1C2C59] p-4 rounded-xl">
-                  <label className="block text-xs font-bold uppercase text-blue-400 mb-1">🏷️ Variantes / Bouteille Complète</label>
-                  <p className="text-[10px] text-gray-500 mb-3">Ex 1: "Bouteille Complète" (Prix: 11000 DA)</p>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-bold uppercase text-blue-400 cursor-pointer flex items-center gap-2">
+                      <input 
+                        type="checkbox" 
+                        checked={proposerDecant} 
+                        onChange={(e) => setProposerDecant(e.target.checked)} 
+                        className="w-4 h-4 rounded accent-[#C59B27]"
+                      />
+                      🧪 Proposer l'option Décant 10 ml
+                    </label>
+                  </div>
+                  <p className="text-[10px] text-gray-400 mb-3">Si activé, les clients pourront aussi commander en formats décantés (10ml, 20ml, 30ml...).</p>
+                  
+                  {proposerDecant && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-gray-400 uppercase font-bold">Prix pour 10 ml (DA) :</label>
+                      <input 
+                        type="number" 
+                        required={proposerDecant}
+                        placeholder="Ex: 1500" 
+                        value={prixDecant10ml} 
+                        onChange={(e) => setPrixDecant10ml(e.target.value)} 
+                        className="w-full bg-[#111C3A] border border-blue-500/30 rounded-lg p-2.5 text-white outline-none focus:border-blue-400 text-sm font-semibold"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* AUTRES VARIANTES */}
+                <div className="bg-[#0A1128] border border-[#1C2C59] p-4 rounded-xl">
+                  <label className="block text-xs font-bold uppercase text-purple-400 mb-1">🏷️ Autres formats / Variantes (Optionnel)</label>
                   <div className="flex gap-2 mb-2">
-                    <input type="text" placeholder="Nom (Ex: Bouteille Complète)" value={varNom} onChange={(e) => setVarNom(e.target.value)} className="w-full bg-[#111C3A] border border-[#1C2C59] rounded-lg p-2 text-white outline-none focus:border-blue-400 text-sm" />
-                    <input type="number" placeholder="Prix final" value={varPrix} onChange={(e) => setVarPrix(e.target.value)} className="w-24 bg-[#111C3A] border border-[#1C2C59] rounded-lg p-2 text-white outline-none focus:border-blue-400 text-sm" />
+                    <input type="text" placeholder="Nom (Ex: Coffret Cadeau)" value={varNom} onChange={(e) => setVarNom(e.target.value)} className="w-full bg-[#111C3A] border border-[#1C2C59] rounded-lg p-2 text-white outline-none focus:border-purple-400 text-sm" />
+                    <input type="number" placeholder="Prix" value={varPrix} onChange={(e) => setVarPrix(e.target.value)} className="w-24 bg-[#111C3A] border border-[#1C2C59] rounded-lg p-2 text-white outline-none focus:border-purple-400 text-sm" />
                     <button type="button" onClick={() => { if (varNom) { setVariantes([...variantes, { nom: varNom, prix: parseFloat(varPrix||"0") }]); setVarNom(""); setVarPrix(""); } }} className="bg-[#C59B27] text-[#0A1128] font-bold px-3 py-2 rounded-lg text-sm hover:bg-[#A37C1C] transition-colors">+</button>
                   </div>
                   {variantes.map((v, i) => (
-                    <div key={i} className="flex justify-between items-center bg-[#111C3A] border border-[#1C2C59] p-2 rounded-lg text-sm mb-1"><span className="text-gray-200">{v.nom} <span className="text-blue-400 font-bold">({v.prix} DA)</span></span><button type="button" onClick={() => setVariantes(variantes.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-500">❌</button></div>
+                    <div key={i} className="flex justify-between items-center bg-[#111C3A] border border-[#1C2C59] p-2 rounded-lg text-sm mb-1"><span className="text-gray-200">{v.nom} <span className="text-purple-400 font-bold">({v.prix} DA)</span></span><button type="button" onClick={() => setVariantes(variantes.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-500">❌</button></div>
                   ))}
                 </div>
 
-                {/* 2. EXTRAS (SUPPLEMENTS) */}
+                {/* EXTRAS */}
                 <div className="bg-[#0A1128] border border-[#1C2C59] p-4 rounded-xl">
                   <label className="block text-xs font-bold uppercase text-amber-500 mb-1">➕ Les Extras Flacons</label>
                   <p className="text-[10px] text-gray-500 mb-3">Ex: "Flacon Luxe" (+150 DA)</p>
@@ -437,10 +500,15 @@ export default function AdminDashboard() {
                   ))}
                 </div>
 
-                <div><label className="block text-xs font-bold uppercase text-gray-400 mb-2">Image du parfum</label><input type="file" accept="image/*" onChange={(e) => setImageFile(e.target.files?.[0] || null)} className="w-full bg-[#0A1128] border border-[#1C2C59] p-2 text-gray-400 rounded-lg text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-[#C59B27]/10 file:text-[#C59B27] hover:file:bg-[#C59B27]/20" /></div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-gray-400 mb-2">Image du parfum</label>
+                  <input type="file" accept="image/*" onChange={(e) => setImageFile(e.target.files?.[0] || null)} className="w-full bg-[#0A1128] border border-[#1C2C59] p-2 text-gray-400 rounded-lg text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-[#C59B27]/10 file:text-[#C59B27] hover:file:bg-[#C59B27]/20" />
+                </div>
                 
                 <div className="pt-2 space-y-2">
-                  <button type="submit" disabled={uploading || categories.length === 0} className="w-full bg-[#C59B27] hover:bg-[#A37C1C] text-[#0A1128] font-bold py-3 rounded-lg uppercase text-sm disabled:opacity-50 transition-colors shadow-[0_0_10px_rgba(197,155,39,0.2)]">{uploading ? "Traitement en cours..." : editingProduit ? "💾 Enregistrer les modifs" : "✅ Valider et Ajouter"}</button>
+                  <button type="submit" disabled={uploading || categories.length === 0} className="w-full bg-[#C59B27] hover:bg-[#A37C1C] text-[#0A1128] font-bold py-3 rounded-lg uppercase text-sm disabled:opacity-50 transition-colors shadow-[0_0_10px_rgba(197,155,39,0.2)]">
+                    {uploading ? "Traitement en cours..." : editingProduit ? "💾 Enregistrer les modifs" : "✅ Valider et Ajouter"}
+                  </button>
                   {editingProduit && <button type="button" onClick={annulerModification} className="w-full bg-[#111C3A] hover:bg-[#1C2C59] text-gray-400 border border-[#1C2C59] font-bold py-2 rounded-lg uppercase text-xs transition-colors">❌ Annuler</button>}
                 </div>
               </form>
@@ -462,11 +530,17 @@ export default function AdminDashboard() {
                               {p.image_url ? <img src={p.image_url} alt={p.titre} className="w-full h-full object-contain" /> : <span className="text-2xl">✨</span>}
                             </div>
                             
-                            <div><h4 className="font-bold text-white text-lg">{p.titre || p.nom}</h4><p className="text-sm text-[#C59B27] font-bold">{p.prix} DA / 10 ml</p></div>
+                            <div>
+                              <h4 className="font-bold text-white text-lg">{p.titre || p.nom}</h4>
+                              <p className="text-sm text-[#C59B27] font-bold">🍾 Bouteille Complète : {p.prix} DA</p>
+                              {p.prix_decant_10ml && (
+                                <p className="text-xs text-blue-400 font-medium">🧪 Décant 10 ml : {p.prix_decant_10ml} DA</p>
+                              )}
+                            </div>
                           </div>
                           <div className="flex gap-2">
                             <button onClick={() => chargerFormulairePourModification(p)} className="bg-[#111C3A] hover:bg-[#1C2C59] text-gray-300 border border-[#1C2C59] text-xs font-bold py-2 px-3 rounded-lg transition-colors">✏️</button>
-                            <button onClick={() => handleSupprimerProduit(p.id, p.titre || p.nom)} className="bg-red-500/10 hover:bg-red-500 hover:text-white border border-red-500/20 text-red-400 text-xs font-bold py-2 px-3 rounded-lg transition-colors">🗑️</button>
+                            <button onClick={() => handleSupprimerProduit(p.id, p.titre || p.nom)} className="bg-red-500/10 hover:bg-red-500 hover:text-white border border-red-500/20 text-red-400 text-xs font-bold py-2 px-3 rounded-lg transition-colors">🗑️️</button>
                           </div>
                         </div>
                       ))}
@@ -496,7 +570,7 @@ export default function AdminDashboard() {
                  {livreurs.map((livreur) => (
                    <div key={livreur.id} className="bg-[#0A1128] border border-[#1C2C59] p-4 rounded-xl flex justify-between items-center">
                      <div><h4 className="font-bold text-white">🛵 {livreur.nom}</h4><p className="text-xs text-gray-400">{livreur.telephone}</p></div>
-                     <button onClick={() => handleSupprimerLivreur(livreur.id, livreur.nom)} className="bg-red-500/10 text-red-500 border border-red-500/20 p-2 rounded-lg hover:bg-red-500 hover:text-white transition-colors">🗑️</button>
+                     <button onClick={() => handleSupprimerLivreur(livreur.id, livreur.nom)} className="bg-red-500/10 text-red-500 border border-red-500/20 p-2 rounded-lg hover:bg-red-500 hover:text-white transition-colors">🗑️️</button>
                    </div>
                  ))}
                </div>
